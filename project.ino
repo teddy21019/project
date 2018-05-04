@@ -7,7 +7,7 @@
 #define WIFI_SSID "qwer"
 #define WIFI_PASSWORD "qqqqqqqq"
 
-int buttonPin = 6;
+int buttonPin = D6;
 
 
 void setup() {
@@ -24,7 +24,7 @@ void setup() {
   Serial.print("connected: ");
   Serial.println(WiFi.localIP());
   pinMode(D0, OUTPUT);
-//  pinMode(buttonPin, INPUT); 
+  pinMode(buttonPin, INPUT); 
   pinMode(LED_BUILTIN, HIGH);
 
   Firebase.begin(FIREBASE_HOST, FIREBASE_AUTH);
@@ -73,13 +73,16 @@ void loop() {
   dbounce++;
 
   //send data to firebase;
+//  Serial.print("canPress:");
+//  Serial.println(canPress);
+//  Serial.print("State:");
+//  Serial.println(reading);
+ 
   int reading = digitalRead(buttonPin);
-  Serial.print("canPress:");
-  Serial.println(canPress);
-  Serial.print("State:");
+  Serial.print("Reading=");
   Serial.println(reading);
   if (canPress && reading == HIGH) {
-    Serial.println( "clicked");
+    Serial.println("clicked");
     lastButtonState = reading;
     canPress = !canPress;
     lastDebounceTime = millis();
