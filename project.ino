@@ -1,20 +1,38 @@
-#include <ESP8266WiFi.h>
+#include <Firebase.h>
 #include <FirebaseArduino.h>
+#include <ESP8266WiFi.h>
+#include <Timer.h>
+#include <Stepper.h>
 
-// Set parameters to connect to firebase
+
 #define FIREBASE_HOST "light-test-7d9fa.firebaseio.com"
 #define FIREBASE_AUTH "mhMewzfKimcL7TTpjoEFRKltxjDScIgkCiNrXNWz"
 #define WIFI_SSID "qwer"
 #define WIFI_PASSWORD "qqqqqqqq"
 
-int buttonPin = D6;     //must add D before pin number or else compile error
+int buttonPin = D1;
+int buzzerPin = D2;
+const float roatationRatio = 5.68892f;
 
+bool openBoxFromServer = false;
+bool canPress = false; 
+bool canDetect = false;
+bool canBuzz = false;
+bool dbounceNet = true;
+bool turnMotor = false;
+
+int lastAngle = 0;
+//enum med = {"off", "day", "niggt"};
+int angle[3] = {0, 120, -120};
+
+Timer t;
+Stepper myStepper(roatationRatio*120, D8, D6, D7, D5);
+int timerBuzzId, timerMotor, timerDetectId, timerNetworkDebounceID;
 
 void setup() {
   Serial.begin(9600);
-
   // connect to wifi.
-  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);       //WiFi is Defined in esp8266Wifi.h
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
   Serial.print("connecting");
   while (WiFi.status() != WL_CONNECTED) {
     Serial.print(".");
@@ -23,75 +41,91 @@ void setup() {
   Serial.println();
   Serial.print("connected: ");
   Serial.println(WiFi.localIP());
-  pinMode(D0, OUTPUT);
-  pinMode(buttonPin, INPUT); 
-  pinMode(LED_BUILTIN, HIGH);
 
-  Firebase.begin(FIREBASE_HOST, FIREBASE_AUTH);   // connect arduino to firebase database
+  pinMode(buttonPin, INPUT);
+  pinMode(buzzerPin, OUTPUT);
+  Firebase.begin(FIREBASE_HOST, FIREBASE_AUTH);
 
-}
+  //Set timer intiallization
+  timerBuzzId = t.pulse(buzzerPin, 2e3, HIGH);
+  myStepper.setSpeed(15);
 
-// Global variables
-int interval = 100;           // initialize interval for flash
-bool light ;                  // whether the light should blink
 
-//Set Debounce
-//    To prevent elders from continuously pressing button
-//    Set time interval to 5 mins.
-//    Can be alterd
-
-unsigned long lastDebounceTime = 0;
-unsigned long debounceDelay = 5000;       // time until next time it can press
-int lastButtonState = LOW;
-bool canPress = true;
-int dbounce=0;  //debonce for internet
+  }
 
 void loop() {
-  //get data from firebase
-  if (Firebase.getBool("alter") == true && dbounce >= 6 ) // in case the database hasn't change its state
-  {
-    light = Firebase.getBool("light");
-    interval = Firebase.getInt("flash");
-    Firebase.setBool("alter", false);
-    dbounce = 0;
+  openBoxFromServer = Firebase.getBool("open");
+  int medicineToEat = Firebase.getInt("C8763");
+  int reading =  digitalRead(buttonPin);
+//  Serial.print("dbouncenet="); Serial.println(dbounceNet);
+//  Serial.print("openBoxFromServer");Serial.println(openBoxFromServer);
+  
+  if (openBoxFromServer == true && dbounceNet == true){
+//    Serial.println("canPress");
+    t.stop(timerDetectId);
+    canBuzz = true;
+    canPress = true;
+    canDetect = true;
   }
-
-  if (light == true) {
-    digitalWrite(D0, HIGH);
-    delay(interval);
-    digitalWrite(D0, LOW);
-    delay(interval);
-  }
-  else if (light == false) {
-    digitalWrite(D0, LOW);
-    digitalWrite(LED_BUILTIN, LOW);
-  }
-  dbounce++;
-
-  //send data to firebase while button pressed
- 
-  int reading = digitalRead(buttonPin);
-      Serial.print(reading);
-  if (canPress && reading == HIGH) {
-    lastButtonState = reading;
-    canPress = !canPress;
-//    Serial.println(canPress);
-    lastDebounceTime = millis();
-    
-    // do things
-    DynamicJsonBuffer jsonBuffer;                             // create json object to push data to firebase
-    JsonObject& clickEvent = jsonBuffer.createObject();
-    clickEvent[".sv"] = "timestamp";                          // save system time
-    Firebase.push("clicked", clickEvent);
-    Serial.println("sended");
-    }else if(!canPress){                                      // if one is unable to press
-      if (millis() - lastDebounceTime >= debounceDelay) {     // if it is down to the reset time
-        canPress = !canPress;                                 // toggle the state of canPress
-//            Serial.println(canPress);
-
-      } 
-  }
+  Serial.println(canDetect);
+  //servo motor part
+  if (reading == HIGH) {
+    if (canPress) {
+      Serial.println("pressed");
+      canBuzz = false;
+      canPress = false;
+      canDetect = false;
+      turnMotor = true;
+      dbounceNet=false;
+      timerDetectId = t.after(0.25 * 60 * 1000, detectTimerCallBack, (void*)0);
+      t.after(50 ,dbounceNetFunc, (void*)0);           //in case that the state hasn't been changed on server
+      alterFireBaseClose();
       
-
+    } else{
+      if (canDetect) {
+        uploadToFireBase();
+        canDetect = false;
+        timerDetectId = t.after(0.25 * 60 * 1000, detectTimerCallBack, (void*)0);
+      }
+    }
+  }
+  //buzzer
+  if (canBuzz) {
+//    buzz();
+  }
+  
+//  Serial.println(turnMotor);
+  if(turnMotor){
+    int a  = angle[medicineToEat]-lastAngle;
+    Serial.print("Into trun");
+    Serial.println(angle[medicineToEat]);
+    myStepper.step(a*roatationRatio);
+    delay(1);
+    lastAngle = angle[medicineToEat];
+    
+    turnMotor = false;
+  }
+  t.update();
+  
+}
+void detectTimerCallBack(void *a) {
+  canDetect = true;
 }
 
+
+
+void uploadToFireBase() {
+  DynamicJsonBuffer jsonBuffer;
+  JsonObject& clickEvent = jsonBuffer.createObject();
+  clickEvent[".sv"] = "timestamp";
+  Firebase.push("clicked", clickEvent);
+}
+
+void alterFireBaseClose() {
+  Firebase.setBool("open", false);
+}
+
+void dbounceNetFunc(void *a){
+  Serial.println("called db func");
+  dbounceNet = true;
+}
