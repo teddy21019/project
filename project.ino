@@ -4,7 +4,6 @@
 #include <Timer.h>
 #include <Stepper.h>
 
-
 #define FIREBASE_HOST "light-test-7d9fa.firebaseio.com"
 #define FIREBASE_AUTH "mhMewzfKimcL7TTpjoEFRKltxjDScIgkCiNrXNWz"
 #define WIFI_SSID "qwer"
@@ -18,11 +17,14 @@ bool openBoxFromServer = false;
 bool canPress = false; 
 bool canDetect = false;
 bool canBuzz = false;
+bool closed = true;
 bool dbounceNet = true;
 bool turnMotor = false;
+bool turnBack = false;
+int reading = false;
 
 int lastAngle = 0;
-//enum med = {"off", "day", "niggt"};
+//enum med = {"off", "day", "night"};
 int angle[3] = {0, 120, -120};
 
 Timer t;
@@ -49,14 +51,19 @@ void setup() {
   //Set timer intiallization
   timerBuzzId = t.pulse(buzzerPin, 2e3, HIGH);
   myStepper.setSpeed(15);
-
-
+  
   }
 
 void loop() {
   openBoxFromServer = Firebase.getBool("open");
   int medicineToEat = Firebase.getInt("C8763");
-  int reading =  digitalRead(buttonPin);
+  if(reading != 2)
+  {
+    reading = digitalRead(buttonPin);
+    if(reading)
+      reading = 1;
+  }
+    reading = digitalRead(buttonPin);
 //  Serial.print("dbouncenet="); Serial.println(dbounceNet);
 //  Serial.print("openBoxFromServer");Serial.println(openBoxFromServer);
   
@@ -69,29 +76,42 @@ void loop() {
   }
   Serial.println(canDetect);
   //servo motor part
-  if (reading == HIGH) {
-    if (canPress) {
+  if (reading) {
+    if (canPress && closed) {
       Serial.println("pressed");
       canBuzz = false;
-      canPress = false;
+      closed = false;
+//      canPress = false;
       canDetect = false;
       turnMotor = true;
+      dbounceNet=false;
+      t.after(50 ,dbounceNetFunc, (void*)0);           //in case that the state hasn't been changed on server
+      alterFireBaseClose();
+      
+    }
+    else if(!closed){
+      closed = true;
+      turnMotor = true;
+      canDetect = false;
+      canPress = false;
+      turnBack = true;
       dbounceNet=false;
       timerDetectId = t.after(0.25 * 60 * 1000, detectTimerCallBack, (void*)0);
       t.after(50 ,dbounceNetFunc, (void*)0);           //in case that the state hasn't been changed on server
       alterFireBaseClose();
-      
-    } else{
+    } else {
       if (canDetect) {
         uploadToFireBase();
         canDetect = false;
         timerDetectId = t.after(0.25 * 60 * 1000, detectTimerCallBack, (void*)0);
       }
     }
+    reading = false;
   }
+  
   //buzzer
   if (canBuzz) {
-//    buzz();
+    buzz();
   }
   
 //  Serial.println(turnMotor);
@@ -105,14 +125,23 @@ void loop() {
     
     turnMotor = false;
   }
+  else if(turnBack){
+    int a  = -lastAngle;
+    Serial.print("Into trun");
+//    Serial.println(angle[medicineToEat]);
+    myStepper.step(a*roatationRatio);
+    delay(1);
+    lastAngle = 0;
+    
+    turnBack = false;
+  }
+
   t.update();
   
 }
 void detectTimerCallBack(void *a) {
   canDetect = true;
 }
-
-
 
 void uploadToFireBase() {
   DynamicJsonBuffer jsonBuffer;
@@ -129,3 +158,4 @@ void dbounceNetFunc(void *a){
   Serial.println("called db func");
   dbounceNet = true;
 }
+
